@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RepoSearch - Find PRs with Instrumented Tests</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+        }
+
+        .layout { display: flex; min-height: 100vh; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: #161b22;
+            border-right: 1px solid #30363d;
+            padding: 1.5rem;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .sidebar h2 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: #8b949e;
+            margin-bottom: 1rem;
+            letter-spacing: 0.5px;
+        }
+
+        .repo-list { list-style: none; }
+
+        .repo-item {
+            padding: 0.75rem;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 0.5rem;
+            border: 1px solid transparent;
+        }
+
+        .repo-item:hover { background: #21262d; }
+        .repo-item.selected { background: #21262d; border-color: #58a6ff; }
+
+        .repo-item-name { font-weight: 600; color: #58a6ff; font-size: 0.9rem; }
+        .repo-item-desc { font-size: 0.75rem; color: #8b949e; margin-top: 0.25rem; }
+
+        .repo-item-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.5rem; }
+
+        .tag {
+            font-size: 0.65rem;
+            padding: 0.15rem 0.4rem;
+            background: #21262d;
+            border-radius: 3px;
+            color: #8b949e;
+        }
+
+        .custom-repo-section { border-top: 1px solid #30363d; margin-top: 1rem; padding-top: 1rem; }
+        .custom-repo-input { display: flex; gap: 0.5rem; }
+        .custom-repo-input input { flex: 1; }
+        .custom-repo-input button { padding: 0.6rem 1rem; font-size: 0.85rem; }
+
+        /* Main content */
+        .main { flex: 1; padding: 2rem; overflow-y: auto; }
+
+        h1 { font-size: 1.75rem; margin-bottom: 0.5rem; color: #f0f6fc; }
+        .subtitle { color: #8b949e; margin-bottom: 2rem; }
+
+        /* Search form */
+        .search-form {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .form-row { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .form-group { flex: 1; min-width: 150px; }
+        .form-group.small { flex: 0.5; min-width: 100px; }
+
+        label { display: block; margin-bottom: 0.5rem; color: #8b949e; font-size: 0.8rem; }
+
+        input, select {
+            width: 100%;
+            padding: 0.6rem;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 0.9rem;
+        }
+
+        input:focus, select:focus { outline: none; border-color: #58a6ff; }
+        input[type="checkbox"] { width: auto; margin-right: 0.5rem; }
+
+        .checkbox-group { display: flex; align-items: center; padding: 0.6rem 0; }
+        .checkbox-group label { margin-bottom: 0; cursor: pointer; }
+
+        .filters-toggle {
+            background: none;
+            border: none;
+            color: #58a6ff;
+            cursor: pointer;
+            font-size: 0.85rem;
+            padding: 0.5rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .filters-toggle:hover { text-decoration: underline; }
+
+        .filters-content {
+            display: none;
+            padding-top: 1rem;
+            border-top: 1px solid #30363d;
+            margin-top: 1rem;
+        }
+
+        .filters-content.show { display: block; }
+
+        button {
+            background: #238636;
+            color: #fff;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        button:hover { background: #2ea043; }
+        button:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+        button.secondary { background: #21262d; color: #c9d1d9; }
+        button.secondary:hover { background: #30363d; }
+
+        /* Progress */
+        .progress-container {
+            display: none;
+            margin-bottom: 1.5rem;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .progress-container.active { display: block; }
+
+        .progress-bar {
+            background: #21262d;
+            border-radius: 6px;
+            height: 8px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #238636, #58a6ff);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .progress-text { color: #8b949e; font-size: 0.85rem; }
+
+        /* Stats bar */
+        .stats-bar { display: none; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+        .stats-bar.active { display: flex; }
+
+        .stat-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            min-width: 120px;
+        }
+
+        .stat-value { font-size: 1.5rem; font-weight: 700; color: #f0f6fc; }
+        .stat-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; }
+
+        /* Results */
+        .results { display: none; }
+        .results.active { display: block; }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .results-count { color: #f0f6fc; font-weight: 600; }
+        .results-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+        .sort-select {
+            padding: 0.5rem;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 0.85rem;
+        }
+
+        /* PR Cards */
+        .pr-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .pr-card:hover { border-color: #58a6ff; }
+
+        .pr-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+            gap: 1rem;
+        }
+
+        .pr-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #58a6ff;
+            text-decoration: none;
+            line-height: 1.4;
+        }
+
+        .pr-title:hover { text-decoration: underline; }
+
+        .pr-badges { display: flex; gap: 0.5rem; flex-shrink: 0; }
+        .pr-number { color: #8b949e; font-size: 0.85rem; }
+        .pr-meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 0.75rem; }
+
+        .pr-stats { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .pr-stat { font-size: 0.8rem; color: #8b949e; }
+        .pr-stat strong { color: #c9d1d9; }
+
+        .test-files { background: #0d1117; border-radius: 6px; padding: 1rem; }
+        .test-section { margin-bottom: 0.75rem; }
+        .test-section:last-child { margin-bottom: 0; }
+
+        .test-section-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: #8b949e;
+            margin-bottom: 0.5rem;
+            letter-spacing: 0.5px;
+        }
+
+        .test-file {
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 0.8rem;
+            padding: 0.25rem 0;
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .test-file.added { color: #3fb950; }
+        .test-file.modified { color: #d29922; }
+        .test-file-path { word-break: break-all; }
+        .test-file-stats { color: #8b949e; white-space: nowrap; }
+
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .badge-score { background: rgba(88, 166, 255, 0.2); color: #58a6ff; }
+        .badge-impl { background: rgba(63, 185, 80, 0.2); color: #3fb950; }
+        .badge-test-only { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+        .badge-added { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
+        .badge-modified { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+
+        .error {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid #f85149;
+            color: #f85149;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .error.active { display: block; }
+        .empty-state { text-align: center; padding: 3rem; color: #8b949e; }
+
+        @media (max-width: 900px) {
+            .layout { flex-direction: column; }
+            .sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid #30363d;
+                max-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <h2>Repositories</h2>
+            <ul class="repo-list" id="repo-list">
+                <li class="repo-item">Loading...</li>
+            </ul>
+            <div class="custom-repo-section">
+                <h2>Custom Repository</h2>
+                <div class="custom-repo-input">
+                    <input type="text" id="custom-repo" placeholder="owner/repo">
+                    <button class="secondary" onclick="selectCustomRepo()">Use</button>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main">
+            <h1>RepoSearch</h1>
+            <p class="subtitle">Find PRs that add instrumented tests to Android repositories</p>
+
+            <div class="error" id="error"></div>
+
+            <div class="search-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Selected Repository</label>
+                        <input type="text" id="repo" placeholder="Select from sidebar or enter owner/repo">
+                    </div>
+                    <div class="form-group small">
+                        <label>Max PRs</label>
+                        <input type="number" id="limit" value="100" min="1" max="500">
+                    </div>
+                    <div class="form-group">
+                        <label>GitHub Token (optional)</label>
+                        <input type="password" id="token" placeholder="ghp_... (for higher rate limits)">
+                    </div>
+                </div>
+
+                <button class="filters-toggle" onclick="toggleFilters()">
+                    <span id="filters-arrow">&#9654;</span> Advanced Filters
+                </button>
+
+                <div class="filters-content" id="filters-content">
+                    <div class="form-row">
+                        <div class="form-group small">
+                            <label>Min Lines</label>
+                            <input type="number" id="min-lines" value="0" min="0">
+                        </div>
+                        <div class="form-group small">
+                            <label>Max Lines</label>
+                            <input type="number" id="max-lines" value="999999" min="0">
+                        </div>
+                        <div class="form-group small">
+                            <label>Min Files</label>
+                            <input type="number" id="min-files" value="0" min="0">
+                        </div>
+                        <div class="form-group small">
+                            <label>Max Files</label>
+                            <input type="number" id="max-files" value="999999" min="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group small">
+                            <label>Min Test Lines</label>
+                            <input type="number" id="min-test-lines" value="0" min="0">
+                        </div>
+                        <div class="form-group small">
+                            <label>Min Score</label>
+                            <input type="number" id="min-score" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="added-only">
+                                <label for="added-only">Only PRs that ADD new tests</label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="require-impl">
+                                <label for="require-impl">Require implementation + tests</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1rem;">
+                    <button id="search-btn" onclick="startSearch()">Search PRs</button>
+                </div>
+            </div>
+
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="progress-text" id="progress-text">Analyzing PRs...</div>
+            </div>
+
+            <div class="stats-bar" id="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-total">0</div>
+                    <div class="stat-label">PRs Found</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-tests-added">0</div>
+                    <div class="stat-label">Tests Added</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-impl">0</div>
+                    <div class="stat-label">Impl + Test</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-avg-score">0</div>
+                    <div class="stat-label">Avg Score</div>
+                </div>
+            </div>
+
+            <div class="results" id="results">
+                <div class="results-header">
+                    <span class="results-count" id="results-count">0 PRs</span>
+                    <div class="results-actions">
+                        <select class="sort-select" id="sort-select" onchange="sortResults()">
+                            <option value="score">Sort by Score</option>
+                            <option value="lines">Sort by Lines</option>
+                            <option value="tests">Sort by Tests Added</option>
+                            <option value="date">Sort by Date</option>
+                        </select>
+                        <button class="secondary" onclick="exportResults()">Export JSON</button>
+                    </div>
+                </div>
+                <div id="pr-list"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let currentResults = [];
+        let allResults = [];
+        let pollInterval = null;
+        let selectedRepo = null;
+
+        document.addEventListener('DOMContentLoaded', loadRepos);
+
+        async function loadRepos() {
+            try {
+                const response = await fetch('/api/repos');
+                const repos = await response.json();
+                renderRepoList(repos);
+            } catch (err) {
+                console.error('Failed to load repos:', err);
+            }
+        }
+
+        function renderRepoList(repos) {
+            const list = document.getElementById('repo-list');
+            list.innerHTML = repos.map(repo => `
+                <li class="repo-item" onclick="selectRepo('${repo.name}')" data-repo="${repo.name}">
+                    <div class="repo-item-name">${repo.name.split('/')[1]}</div>
+                    <div class="repo-item-desc">${repo.description || ''}</div>
+                    <div class="repo-item-tags">
+                        ${(repo.tags || []).map(t => `<span class="tag">${t}</span>`).join('')}
+                    </div>
+                </li>
+            `).join('');
+        }
+
+        function selectRepo(repoName) {
+            selectedRepo = repoName;
+            document.getElementById('repo').value = repoName;
+            document.querySelectorAll('.repo-item').forEach(el => {
+                el.classList.toggle('selected', el.dataset.repo === repoName);
+            });
+        }
+
+        function selectCustomRepo() {
+            const customRepo = document.getElementById('custom-repo').value.trim();
+            if (customRepo && customRepo.includes('/')) {
+                selectRepo(customRepo);
+            } else {
+                showError('Please enter a valid repo in owner/repo format');
+            }
+        }
+
+        function toggleFilters() {
+            const content = document.getElementById('filters-content');
+            const arrow = document.getElementById('filters-arrow');
+            content.classList.toggle('show');
+            arrow.innerHTML = content.classList.contains('show') ? '&#9660;' : '&#9654;';
+        }
+
+        async function startSearch() {
+            const repo = document.getElementById('repo').value.trim();
+            const limit = parseInt(document.getElementById('limit').value);
+            const token = document.getElementById('token').value.trim();
+
+            if (!repo || !repo.includes('/')) {
+                showError('Please select or enter a valid repository');
+                return;
+            }
+
+            hideError();
+            document.getElementById('search-btn').disabled = true;
+            document.getElementById('progress-container').classList.add('active');
+            document.getElementById('results').classList.remove('active');
+            document.getElementById('stats-bar').classList.remove('active');
+            document.getElementById('progress-fill').style.width = '0%';
+            document.getElementById('progress-text').textContent = 'Starting search...';
+
+            const filters = {
+                repo, limit, token,
+                minLines: parseInt(document.getElementById('min-lines').value) || 0,
+                maxLines: parseInt(document.getElementById('max-lines').value) || 999999,
+                minFiles: parseInt(document.getElementById('min-files').value) || 0,
+                maxFiles: parseInt(document.getElementById('max-files').value) || 999999,
+                minTestLines: parseInt(document.getElementById('min-test-lines').value) || 0,
+                minScore: parseInt(document.getElementById('min-score').value) || 0,
+                addedOnly: document.getElementById('added-only').checked,
+                requireImpl: document.getElementById('require-impl').checked,
+            };
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(filters)
+                });
+
+                const data = await response.json();
+                if (data.error) { showError(data.error); resetUI(); return; }
+                pollSearchStatus(data.search_id);
+            } catch (err) {
+                showError('Failed to start search: ' + err.message);
+                resetUI();
+            }
+        }
+
+        function pollSearchStatus(searchId) {
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/search/${searchId}`);
+                    const data = await response.json();
+
+                    if (data.error && data.status !== 'error') {
+                        showError(data.error);
+                        clearInterval(pollInterval);
+                        resetUI();
+                        return;
+                    }
+
+                    const progress = data.total > 0 ? (data.progress / data.total * 100) : 0;
+                    document.getElementById('progress-fill').style.width = `${progress}%`;
+                    document.getElementById('progress-text').textContent =
+                        `Analyzing PR ${data.progress} of ${data.total}... (${data.filtered_results?.length || 0} matching)`;
+
+                    allResults = data.results || [];
+                    currentResults = data.filtered_results || [];
+                    updateStats();
+                    renderResults();
+
+                    if (data.status === 'complete') {
+                        clearInterval(pollInterval);
+                        document.getElementById('progress-container').classList.remove('active');
+                        resetUI();
+                    } else if (data.status === 'error') {
+                        showError(data.error || 'Search failed');
+                        clearInterval(pollInterval);
+                        resetUI();
+                    }
+                } catch (err) {
+                    showError('Failed to get search status: ' + err.message);
+                    clearInterval(pollInterval);
+                    resetUI();
+                }
+            }, 1000);
+        }
+
+        function updateStats() {
+            const results = currentResults;
+            document.getElementById('stat-total').textContent = results.length;
+            document.getElementById('stat-tests-added').textContent =
+                results.reduce((sum, r) => sum + (r.test_files_added?.length || 0), 0);
+            document.getElementById('stat-impl').textContent =
+                results.filter(r => r.has_implementation).length;
+            document.getElementById('stat-avg-score').textContent = results.length > 0
+                ? Math.round(results.reduce((sum, r) => sum + (r.quality_score || 0), 0) / results.length)
+                : 0;
+            document.getElementById('stats-bar').classList.add('active');
+        }
+
+        function renderResults() {
+            let results = [...currentResults];
+            const sortBy = document.getElementById('sort-select').value;
+
+            if (sortBy === 'score') results.sort((a, b) => (b.quality_score || 0) - (a.quality_score || 0));
+            else if (sortBy === 'lines') results.sort((a, b) => (b.total_lines_changed || 0) - (a.total_lines_changed || 0));
+            else if (sortBy === 'tests') results.sort((a, b) => (b.test_files_added?.length || 0) - (a.test_files_added?.length || 0));
+            else if (sortBy === 'date') results.sort((a, b) => new Date(b.merged_at) - new Date(a.merged_at));
+
+            document.getElementById('results-count').textContent = `${results.length} PRs`;
+            document.getElementById('results').classList.add('active');
+
+            const prList = document.getElementById('pr-list');
+            if (results.length === 0) {
+                prList.innerHTML = '<div class="empty-state">No PRs matching filters found</div>';
+                return;
+            }
+
+            prList.innerHTML = results.map(pr => `
+                <div class="pr-card">
+                    <div class="pr-header">
+                        <a href="${pr.url}" target="_blank" class="pr-title">${escapeHtml(pr.title)}</a>
+                        <div class="pr-badges">
+                            <span class="badge badge-score">Score: ${pr.quality_score || 0}</span>
+                            ${pr.has_implementation
+                                ? '<span class="badge badge-impl">IMPL+TEST</span>'
+                                : '<span class="badge badge-test-only">TEST-ONLY</span>'}
+                        </div>
+                    </div>
+                    <div class="pr-meta">
+                        <span class="pr-number">#${pr.number}</span> by <strong>${escapeHtml(pr.author)}</strong> &middot; merged ${formatDate(pr.merged_at)}
+                    </div>
+                    <div class="pr-stats">
+                        <span class="pr-stat"><strong>${pr.total_files_changed || 0}</strong> files</span>
+                        <span class="pr-stat"><strong>+${pr.total_additions || 0}</strong> / <strong>-${pr.total_deletions || 0}</strong> lines</span>
+                        ${pr.test_files_added?.length ? `<span class="badge badge-added">+${pr.test_files_added.length} tests</span>` : ''}
+                        ${pr.test_files_modified?.length ? `<span class="badge badge-modified">~${pr.test_files_modified.length} tests</span>` : ''}
+                    </div>
+                    <div class="test-files">
+                        ${pr.test_files_added?.length ? `
+                            <div class="test-section">
+                                <div class="test-section-title">Tests Added</div>
+                                ${pr.test_files_added.map(f => `
+                                    <div class="test-file added">
+                                        <span class="test-file-path">+ ${escapeHtml(f.path)}</span>
+                                        <span class="test-file-stats">+${f.additions} -${f.deletions}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                        ${pr.test_files_modified?.length ? `
+                            <div class="test-section">
+                                <div class="test-section-title">Tests Modified</div>
+                                ${pr.test_files_modified.slice(0, 5).map(f => `
+                                    <div class="test-file modified">
+                                        <span class="test-file-path">~ ${escapeHtml(f.path)}</span>
+                                        <span class="test-file-stats">+${f.additions} -${f.deletions}</span>
+                                    </div>
+                                `).join('')}
+                                ${pr.test_files_modified.length > 5 ? `<div class="test-file modified">... and ${pr.test_files_modified.length - 5} more</div>` : ''}
+                            </div>
+                        ` : ''}
+                        ${pr.src_files_added?.length ? `
+                            <div class="test-section">
+                                <div class="test-section-title">Source Added</div>
+                                ${pr.src_files_added.slice(0, 3).map(f => `
+                                    <div class="test-file added">
+                                        <span class="test-file-path">+ ${escapeHtml(f.path)}</span>
+                                        <span class="test-file-stats">+${f.additions} -${f.deletions}</span>
+                                    </div>
+                                `).join('')}
+                                ${pr.src_files_added.length > 3 ? `<div class="test-file added">... and ${pr.src_files_added.length - 3} more</div>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function sortResults() { renderResults(); }
+
+        function exportResults() {
+            const dataStr = JSON.stringify(currentResults, null, 2);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `reposearch-${selectedRepo?.replace('/', '-') || 'results'}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = message;
+            errorEl.classList.add('active');
+        }
+
+        function hideError() { document.getElementById('error').classList.remove('active'); }
+        function resetUI() { document.getElementById('search-btn').disabled = false; }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        function formatDate(dateStr) {
+            return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+    </script>
+</body>
+</html>

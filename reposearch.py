@@ -32,6 +32,71 @@ except ImportError:
 
 
 # ============================================================================
+# Cache System
+# ============================================================================
+
+CACHE_DIR = Path(__file__).parent / "cache"
+
+
+def get_cache_path(owner: str, repo: str) -> Path:
+    """Get cache file path for a repo."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    return CACHE_DIR / f"{owner}_{repo}.json"
+
+
+def load_cache(owner: str, repo: str) -> dict:
+    """Load cached PR data for a repo."""
+    cache_path = get_cache_path(owner, repo)
+    if cache_path.exists():
+        with open(cache_path) as f:
+            return json.load(f)
+    return {"prs": {}, "last_updated": None}
+
+
+def save_cache(owner: str, repo: str, cache_data: dict):
+    """Save PR data to cache."""
+    cache_path = get_cache_path(owner, repo)
+    cache_data["last_updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(cache_path, "w") as f:
+        json.dump(cache_data, f, indent=2)
+
+
+def clear_cache(owner: str = None, repo: str = None):
+    """Clear cache for a specific repo or all repos."""
+    if owner and repo:
+        cache_path = get_cache_path(owner, repo)
+        if cache_path.exists():
+            cache_path.unlink()
+            print(f"Cleared cache for {owner}/{repo}")
+    else:
+        if CACHE_DIR.exists():
+            for f in CACHE_DIR.glob("*.json"):
+                f.unlink()
+            print("Cleared all cache")
+
+
+def list_cache():
+    """List all cached repos."""
+    if not CACHE_DIR.exists():
+        print("No cache found")
+        return
+
+    print("\n" + "="*60)
+    print("CACHED REPOSITORIES")
+    print("="*60 + "\n")
+
+    for f in sorted(CACHE_DIR.glob("*.json")):
+        with open(f) as fp:
+            data = json.load(fp)
+        repo_name = f.stem.replace("_", "/")
+        pr_count = len(data.get("prs", {}))
+        updated = data.get("last_updated", "unknown")
+        print(f"  {repo_name}: {pr_count} PRs cached (updated: {updated})")
+
+    print()
+
+
+# ============================================================================
 # Data Classes
 # ============================================================================
 
@@ -482,25 +547,81 @@ def list_repos():
 # Search & Output
 # ============================================================================
 
-def search_repo(owner: str, repo: str, limit: int = 100, token: str = None) -> list[PRResult]:
+def pr_result_from_dict(d: dict) -> PRResult:
+    """Reconstruct PRResult from cached dict."""
+    return PRResult(
+        number=d["number"],
+        title=d["title"],
+        url=d["url"],
+        author=d["author"],
+        merged_at=d["merged_at"],
+        all_files=[FileChange(**f) for f in d.get("all_files", [])],
+        test_files_added=[FileChange(**f) for f in d.get("test_files_added", [])],
+        test_files_modified=[FileChange(**f) for f in d.get("test_files_modified", [])],
+        src_files_added=[FileChange(**f) for f in d.get("src_files_added", [])],
+        src_files_modified=[FileChange(**f) for f in d.get("src_files_modified", [])],
+    )
+
+
+def search_repo(owner: str, repo: str, limit: int = 100, token: str = None,
+                use_cache: bool = True, refresh_cache: bool = False) -> list[PRResult]:
     """Search a repo for PRs that add instrumented tests."""
     client = GitHubClient(token)
+
+    # Load existing cache
+    cache = load_cache(owner, repo) if use_cache else {"prs": {}}
+    cached_prs = cache.get("prs", {})
+
+    if cached_prs and not refresh_cache:
+        print(f"Found {len(cached_prs)} cached PRs for {owner}/{repo}")
 
     print(f"Fetching merged PRs from {owner}/{repo}...")
     prs = client.get_merged_prs(owner, repo, limit)
     print(f"Found {len(prs)} merged PRs, analyzing...\n")
 
     results = []
+    new_cached = 0
+    from_cache = 0
+
     for i, pr in enumerate(prs):
+        pr_key = str(pr["number"])
+
+        # Check if we have this PR cached
+        if pr_key in cached_prs and use_cache and not refresh_cache:
+            cached_data = cached_prs[pr_key]
+            if cached_data:  # PR has test files
+                result = pr_result_from_dict(cached_data)
+                results.append(result)
+                from_cache += 1
+                print(f"[{i+1}/{len(prs)}] PR #{pr['number']}: (cached) score={result.quality_score}")
+            else:
+                print(f"[{i+1}/{len(prs)}] PR #{pr['number']}: (cached) no instrumented tests")
+                from_cache += 1
+            continue
+
+        # Analyze PR (not cached)
         result = analyze_pr(client, owner, repo, pr)
+
         if result:
             results.append(result)
+            # Cache the result
+            cached_prs[pr_key] = asdict(result)
+            new_cached += 1
             added = len(result.test_files_added)
             modified = len(result.test_files_modified)
             score = result.quality_score
             print(f"[{i+1}/{len(prs)}] PR #{result.number}: +{added} added, ~{modified} modified, score={score}")
         else:
+            # Cache that this PR has no tests (so we don't re-check)
+            cached_prs[pr_key] = None
+            new_cached += 1
             print(f"[{i+1}/{len(prs)}] PR #{pr['number']}: no instrumented tests")
+
+    # Save updated cache
+    if use_cache and new_cached > 0:
+        cache["prs"] = cached_prs
+        save_cache(owner, repo, cache)
+        print(f"\nCache updated: {new_cached} new, {from_cache} from cache")
 
     return results
 
@@ -597,6 +718,29 @@ Examples:
         help="Search a repo from the master list by name"
     )
 
+    # Cache options
+    cache_group = parser.add_argument_group("cache")
+    cache_group.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Don't use cache, fetch everything fresh"
+    )
+    cache_group.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Refresh cache (re-fetch all PRs)"
+    )
+    cache_group.add_argument(
+        "--list-cache",
+        action="store_true",
+        help="List all cached repos"
+    )
+    cache_group.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear cache for the specified repo (or all if no repo)"
+    )
+
     # Limits
     parser.add_argument(
         "--limit", "-l",
@@ -677,6 +821,20 @@ Examples:
         list_repos()
         return
 
+    # Handle --list-cache
+    if args.list_cache:
+        list_cache()
+        return
+
+    # Handle --clear-cache
+    if args.clear_cache:
+        if args.repo:
+            owner, repo = args.repo.split("/", 1)
+            clear_cache(owner, repo)
+        else:
+            clear_cache()
+        return
+
     # Determine repo to search
     repo_str = None
     if args.from_list:
@@ -713,7 +871,11 @@ Examples:
     )
 
     # Run search
-    results = search_repo(owner, repo, args.limit, args.token)
+    results = search_repo(
+        owner, repo, args.limit, args.token,
+        use_cache=not args.no_cache,
+        refresh_cache=args.refresh
+    )
 
     # Apply filters
     original_count = len(results)

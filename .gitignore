@@ -20,6 +20,9 @@ output/
 *.json
 !data/repos.yaml
 
+# Cache
+cache/
+
 # OS
 .DS_Store
 Thumbs.db
